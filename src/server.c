@@ -1,4 +1,4 @@
-#define _BSD_SOURCE
+#define _DEFAULT_SOURCE
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -9,7 +9,7 @@
 
 #include "server.h"
 
-client_t *client_insert(client_t **head, struct libwebsocket *socket) {
+client_t *client_insert(client_t **head, struct lws *socket) {
 	client_t *client = (struct server_client_t *)malloc(sizeof(struct server_client_t));
 	client->socket = socket;
 	client->next = *head;
@@ -17,7 +17,7 @@ client_t *client_insert(client_t **head, struct libwebsocket *socket) {
 	return client;
 }
 
-void client_remove(client_t **head, struct libwebsocket *socket) {
+void client_remove(client_t **head, struct lws *socket) {
 	for( client_t **current = head; *current; current = &(*current)->next ) {
 		if( (*current)->socket == socket ) {
 			client_t* next = (*current)->next;
@@ -28,13 +28,13 @@ void client_remove(client_t **head, struct libwebsocket *socket) {
 	}
 }
 
-static int callback_http(struct libwebsocket_context *, struct libwebsocket *, enum libwebsocket_callback_reasons, void *, void *, size_t);
-static int callback_websockets(struct libwebsocket_context *, struct libwebsocket *, enum libwebsocket_callback_reasons,void *, void *, size_t);
+static int callback_http(struct lws *, enum lws_callback_reasons, void *, void *, size_t);
+static int callback_websockets(struct lws *, enum lws_callback_reasons,void *, void *, size_t);
 
-static struct libwebsocket_protocols server_protocols[] = {
-	{ "http-only", callback_http, 0 },
-	{ NULL, callback_websockets, sizeof(int), 1024*1024 },
-	{ NULL, NULL, 0 /* End of list */ }
+static struct lws_protocols server_protocols[] = {
+	{ "http-only", callback_http, 0, 0, 0, NULL, 0 },
+	{ NULL, callback_websockets, sizeof(int), 1024*1024, 0, NULL, 0 },
+	{ NULL, NULL, 0, 0, 0, NULL, 0 /* End of list */ }
 };
 
 server_t *server_create(int port, size_t buffer_size) {
@@ -57,7 +57,7 @@ server_t *server_create(int port, size_t buffer_size) {
 	info.uid = -1;
 	info.user = (void *)self;
 	info.protocols = server_protocols;
-	self->context = libwebsocket_create_context(&info);
+	self->context = lws_create_context(&info);
 
   if( !self->context ) {
 		server_destroy(self);
@@ -71,7 +71,7 @@ void server_destroy(server_t *self) {
 	if( self == NULL ) { return; }
 
 	if( self->context ) {
-		libwebsocket_context_destroy(self->context);
+		lws_context_destroy(self->context);
 	}
 
 	free(self->send_buffer_with_padding);
@@ -91,12 +91,12 @@ char *server_get_host_address(server_t *self) {
 	return inet_ntoa( *(struct in_addr *)(host->h_addr_list[0]) );
 }
 
-char *server_get_client_address(server_t *self, struct libwebsocket *wsi) {
+char *server_get_client_address(server_t *self, struct lws *wsi) {
 	static char ip_buffer[32];
 	static char name_buffer[32];
 
-	libwebsockets_get_peer_addresses(
-		self->context, wsi, libwebsocket_get_socket_fd(wsi),
+	lws_get_peer_addresses(
+		wsi, lws_get_socket_fd(wsi),
 		name_buffer, sizeof(name_buffer),
 		ip_buffer, sizeof(ip_buffer)
 	);
@@ -104,11 +104,11 @@ char *server_get_client_address(server_t *self, struct libwebsocket *wsi) {
 }
 
 void server_update(server_t *self) {
-	libwebsocket_callback_on_writable_all_protocol(&(server_protocols[1]));
-	libwebsocket_service(self->context, 0);
+	lws_callback_on_writable_all_protocol(self->context, &(server_protocols[1]));
+	lws_service(self->context, 0);
 }
 
-void server_send(server_t *self, struct libwebsocket *socket, void *data, size_t size, server_data_type_t type) {
+void server_send(server_t *self, struct lws *socket, void *data, size_t size, server_data_type_t type) {
 	// Caution, this may explode! The libwebsocket docs advise against ever calling libwebsocket_write()
 	// outside of LWS_CALLBACK_SERVER_WRITEABLE. Honoring this advise would complicate things quite
 	// a bit - and it seems to work just fine on my system as it is anyway.
@@ -120,7 +120,7 @@ void server_send(server_t *self, struct libwebsocket *socket, void *data, size_t
 		return;
 	}
 	memcpy(self->send_buffer, data, size);
-	libwebsocket_write(socket, self->send_buffer, size, (enum libwebsocket_write_protocol)type);
+	lws_write(socket, self->send_buffer, size, (enum lws_write_protocol)type);
 }
 
 void server_broadcast(server_t *self, void *data, size_t size, server_data_type_t type) {
@@ -131,18 +131,19 @@ void server_broadcast(server_t *self, void *data, size_t size, server_data_type_
 	memcpy(self->send_buffer, data, size);
 
 	client_foreach(self->clients, client) {
-		libwebsocket_write(client->socket, self->send_buffer, size, (enum libwebsocket_write_protocol)type);
+		lws_write(client->socket, self->send_buffer, size, (enum lws_write_protocol)type);
 	}
-	libwebsocket_callback_on_writable_all_protocol(&(server_protocols[1]));
+	lws_callback_on_writable_all_protocol(self->context, &(server_protocols[1]));
 }
 
 static int callback_websockets(
-	struct libwebsocket_context *context,
-	struct libwebsocket *wsi,
-	enum libwebsocket_callback_reasons reason,
-	void *user, void *in, size_t len
+	struct lws *wsi,
+	enum lws_callback_reasons reason,
+	void *user,
+  void *in,
+  size_t len
 ) {
-	server_t *self = (server_t *)libwebsocket_context_user(context);
+	server_t *self = (server_t *)lws_wsi_user(wsi);
 
 	switch( reason ) {
 		case LWS_CALLBACK_ESTABLISHED:
@@ -172,18 +173,19 @@ static int callback_websockets(
 }
 
 static int callback_http(
-	struct libwebsocket_context *context,
-	struct libwebsocket *wsi,
-	enum libwebsocket_callback_reasons reason, void *user,
-	void *in, size_t len
+	struct lws *wsi,
+	enum lws_callback_reasons reason,
+  void *user,
+	void *in,
+  size_t len
 ) {
-	server_t *self = (server_t *)libwebsocket_context_user(context);
+	server_t *self = (server_t *)lws_wsi_user(wsi);
 
 	if( reason == LWS_CALLBACK_HTTP ) {
 		if( self->on_http_req && self->on_http_req(self, wsi, (char *)in) ) {
 			return 0;
 		}
-		libwebsockets_return_http_status(context, wsi, HTTP_STATUS_NOT_FOUND, NULL);
+		lws_return_http_status(wsi, HTTP_STATUS_NOT_FOUND, NULL);
 		return 0;
 	}
 

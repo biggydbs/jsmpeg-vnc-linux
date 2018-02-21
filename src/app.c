@@ -1,4 +1,4 @@
-#define _BSD_SOURCE
+#define _DEFAULT_SOURCE
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,10 +73,10 @@ int swap_int16(int in) {
 }
 
 // Proxies for app_on_* callbacks
-void on_connect(server_t *server, struct libwebsocket *socket) { app_on_connect((app_t *)server->user, socket); }
-int on_http_req(server_t *server, struct libwebsocket *socket, char *request) { return app_on_http_req((app_t *)server->user, socket, request); }
-void on_message(server_t *server, struct libwebsocket *socket, void *data, size_t len) { app_on_message((app_t *)server->user, socket, data, len); }
-void on_close(server_t *server, struct libwebsocket *socket) { app_on_close((app_t *)server->user, socket); }
+void on_connect(server_t *server, struct lws *socket) { app_on_connect((app_t *)server->user, socket); }
+int on_http_req(server_t *server, struct lws *socket, char *request) { return app_on_http_req((app_t *)server->user, socket, request); }
+void on_message(server_t *server, struct lws *socket, void *data, size_t len) { app_on_message((app_t *)server->user, socket, data, len); }
+void on_close(server_t *server, struct lws *socket) { app_on_close((app_t *)server->user, socket); }
 
 app_t *app_create(Display *display, Window window, int port, int bit_rate, int out_width, int out_height) {
 	app_t *self = (app_t *)malloc(sizeof(app_t));
@@ -122,24 +122,24 @@ void app_destroy(app_t *self) {
 	free(self);
 }
 
-int app_on_http_req(app_t *self, struct libwebsocket *socket, char *request) {
+int app_on_http_req(app_t *self, struct lws *socket, char *request) {
 	//printf("http request: %s\n", request);
 	if( strcmp(request, "/") == 0 ) {
-		libwebsockets_serve_http_file(self->server->context, socket, "client/index.html", "text/html; charset=utf-8", NULL);
+		lws_serve_http_file(socket, "client/index.html", "text/html; charset=utf-8", NULL, 0);
 		return 1;
 	}
 	else if( strcmp(request, "/jsmpg.js") == 0 ) {
-		libwebsockets_serve_http_file(self->server->context, socket, "client/jsmpg.js", "text/javascript; charset=utf-8", NULL);
+		lws_serve_http_file(socket, "client/jsmpg.js", "text/javascript; charset=utf-8", NULL, 0);
 		return 1;
 	}
 	else if( strcmp(request, "/jsmpg-vnc.js") == 0 ) {
-		libwebsockets_serve_http_file(self->server->context, socket, "client/jsmpg-vnc.js", "text/javascript; charset=utf-8", NULL);
+		lws_serve_http_file(socket, "client/jsmpg-vnc.js", "text/javascript; charset=utf-8", NULL, 0);
 		return 1;
 	}
 	return 0;
 }
 
-void app_on_connect(app_t *self, struct libwebsocket *socket) {
+void app_on_connect(app_t *self, struct lws *socket) {
 	printf("\nclient connected: %s\n", server_get_client_address(self->server, socket));
 
 	jsmpeg_header_t header = {
@@ -149,11 +149,11 @@ void app_on_connect(app_t *self, struct libwebsocket *socket) {
 	server_send(self->server, socket, &header, sizeof(header), server_type_binary);
 }
 
-void app_on_close(app_t *self, struct libwebsocket *socket) {
+void app_on_close(app_t *self, struct lws *socket) {
 	printf("\nclient disconnected: %s\n", server_get_client_address(self->server, socket));
 }
 
-void app_on_message(app_t *self, struct libwebsocket *socket, void *data, size_t len) {
+void app_on_message(app_t *self, struct lws *socket, void *data, size_t len) {
 	input_type_t type = (input_type_t)((unsigned short *)data)[0];
 
 	if( type & input_type_key && len >= sizeof(input_key_t) ) {
