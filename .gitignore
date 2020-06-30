@@ -29,3 +29,5 @@ bin/jsmpeg-vnc
 # Debug files
 *.dSYM/
 *.su
+
+.idea/
